@@ -1,4 +1,0 @@
-#!/bin/sh
-# Placeholder - replaced by postinstall script
-echo "searchgrep not installed correctly. Run: npm rebuild searchgrep"
-exit 1
