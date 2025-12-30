@@ -581,31 +581,24 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let mcp_config = serde_json::json!({
-                "command": searchgrep_path,
-                "args": ["mcp-server"],
-                "env": {}
-            });
-
             for tool_name in tools {
-                // Claude Code uses ~/.claude/mcp_servers.json
-                // Other tools use their own mcp.json files
-                let config_path = match tool_name {
-                    "claude" => home.join(".claude/mcp_servers.json"),
-                    "opencode" => home.join(".opencode/mcp.json"),
-                    "cursor" => home.join(".cursor/mcp.json"),
-                    "windsurf" => home.join(".windsurf/mcp.json"),
-                    "codex" => home.join(".codex/mcp.json"),
-                    "gemini" => home.join(".gemini/mcp.json"),
-                    "cody" => home.join(".cody/mcp.json"),
-                    "continue" => home.join(".continue/mcp.json"),
-                    "aider" => home.join(".aider/mcp.json"),
-                    "zed" => home.join(".zed/mcp.json"),
-                    "acp" => home.join(".acp/mcp.json"),
-                    "droid" => home.join(".droid/mcp.json"),
-                    "amp" => home.join(".amp/mcp.json"),
-                    "roo" => home.join(".roo-code/mcp.json"),
-                    "cline" => home.join(".cline/mcp.json"),
+                // Each tool has its own config path and format
+                let (config_path, config_type) = match tool_name {
+                    "claude" => (home.join(".claude/mcp_servers.json"), "mcpServers"),
+                    "cursor" => (home.join(".cursor/mcp.json"), "mcpServers"),
+                    "windsurf" => (home.join(".codeium/windsurf/mcp_config.json"), "mcpServers"),
+                    "codex" => (home.join(".codex/mcp.json"), "mcpServers"),
+                    "opencode" => (home.join(".opencode/mcp.json"), "mcpServers"),
+                    "zed" => (home.join(".config/zed/settings.json"), "context_servers"),
+                    "continue" => (home.join(".continue/config.json"), "experimental.modelContextProtocolServers"),
+                    "cline" => (home.join("Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"), "mcpServers"),
+                    "roo" => (home.join("Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json"), "mcpServers"),
+                    "amp" => (home.join(".amp/amp.yaml"), "mcpServers"),
+                    "gemini" => (home.join(".gemini/settings.json"), "mcpServers"),
+                    "cody" => (home.join("Library/Application Support/Code/User/globalStorage/sourcegraph.cody-ai/cody_mcp_settings.json"), "mcpServers"),
+                    "aider" => (home.join(".aider/mcp.json"), "mcpServers"),
+                    "droid" => (home.join(".droid/mcp.json"), "mcpServers"),
+                    "acp" => (home.join(".acp/mcp.json"), "mcpServers"),
                     _ => continue,
                 };
 
@@ -614,23 +607,88 @@ async fn main() -> Result<()> {
                     std::fs::create_dir_all(parent)?;
                 }
 
-                // Load or create config
-                let mut config: serde_json::Value = if config_path.exists() {
-                    let content = std::fs::read_to_string(&config_path)?;
-                    serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                // Zed uses a different config structure
+                if config_type == "context_servers" {
+                    let zed_config = serde_json::json!({
+                        "command": searchgrep_path,
+                        "args": ["mcp-server"]
+                    });
+
+                    let mut config: serde_json::Value = if config_path.exists() {
+                        let content = std::fs::read_to_string(&config_path)?;
+                        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+
+                    if config.get("context_servers").is_none() {
+                        config["context_servers"] = serde_json::json!({});
+                    }
+                    config["context_servers"]["searchgrep"] = zed_config;
+
+                    let content = serde_json::to_string_pretty(&config)?;
+                    std::fs::write(&config_path, content)?;
+                } else if config_type == "experimental.modelContextProtocolServers" {
+                    // Continue uses experimental.modelContextProtocolServers array
+                    let continue_config = serde_json::json!({
+                        "name": "searchgrep",
+                        "command": searchgrep_path,
+                        "args": ["mcp-server"]
+                    });
+
+                    let mut config: serde_json::Value = if config_path.exists() {
+                        let content = std::fs::read_to_string(&config_path)?;
+                        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+
+                    if config.get("experimental").is_none() {
+                        config["experimental"] = serde_json::json!({});
+                    }
+                    if config["experimental"]
+                        .get("modelContextProtocolServers")
+                        .is_none()
+                    {
+                        config["experimental"]["modelContextProtocolServers"] =
+                            serde_json::json!([]);
+                    }
+
+                    // Remove existing searchgrep entry if present
+                    if let Some(arr) =
+                        config["experimental"]["modelContextProtocolServers"].as_array_mut()
+                    {
+                        arr.retain(|v| {
+                            v.get("name").and_then(|n| n.as_str()) != Some("searchgrep")
+                        });
+                        arr.push(continue_config);
+                    }
+
+                    let content = serde_json::to_string_pretty(&config)?;
+                    std::fs::write(&config_path, content)?;
                 } else {
-                    serde_json::json!({})
-                };
+                    // Standard mcpServers format (Claude, Cursor, Codex, Cline, etc.)
+                    let mcp_config = serde_json::json!({
+                        "command": searchgrep_path,
+                        "args": ["mcp-server"],
+                        "env": {}
+                    });
 
-                // All tools use flat mcpServers structure
-                if config.get("mcpServers").is_none() {
-                    config["mcpServers"] = serde_json::json!({});
+                    let mut config: serde_json::Value = if config_path.exists() {
+                        let content = std::fs::read_to_string(&config_path)?;
+                        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+
+                    if config.get("mcpServers").is_none() {
+                        config["mcpServers"] = serde_json::json!({});
+                    }
+                    config["mcpServers"]["searchgrep"] = mcp_config;
+
+                    let content = serde_json::to_string_pretty(&config)?;
+                    std::fs::write(&config_path, content)?;
                 }
-                config["mcpServers"]["searchgrep"] = mcp_config.clone();
-
-                // Write config
-                let content = serde_json::to_string_pretty(&config)?;
-                std::fs::write(&config_path, content)?;
 
                 println!(
                     "{} Configured {} at {}",
