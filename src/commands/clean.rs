@@ -8,13 +8,18 @@ pub struct CleanOptions {
     pub list: bool,
     pub all: bool,
     pub store: Option<String>,
+    pub json: bool,
 }
 
 pub async fn run(options: CleanOptions) -> Result<()> {
     let config_dir = Config::config_dir()?;
 
     if options.list {
-        list_indexes(&config_dir)?;
+        if options.json {
+            list_indexes_json(&config_dir)?;
+        } else {
+            list_indexes(&config_dir)?;
+        }
         return Ok(());
     }
 
@@ -94,6 +99,46 @@ fn list_indexes(config_dir: &std::path::Path) -> Result<()> {
 
     println!();
     println!("{}", format!("Location: {}", config_dir.display()).dimmed());
+
+    Ok(())
+}
+
+fn list_indexes_json(config_dir: &std::path::Path) -> Result<()> {
+    let mut indexes: Vec<serde_json::Value> = Vec::new();
+    let mut total_size: u64 = 0;
+
+    if config_dir.exists() {
+        for entry in fs::read_dir(config_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".store.json") {
+                    let store_name = name.trim_end_matches(".store.json");
+                    let metadata = fs::metadata(&path)?;
+                    let size = metadata.len();
+                    total_size += size;
+
+                    indexes.push(serde_json::json!({
+                        "name": store_name,
+                        "size_bytes": size,
+                        "size_human": format_size(size),
+                        "path": path.to_string_lossy()
+                    }));
+                }
+            }
+        }
+    }
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "indexes": indexes,
+            "total_size_bytes": total_size,
+            "total_size_human": format_size(total_size),
+            "config_dir": config_dir.to_string_lossy()
+        })
+    );
 
     Ok(())
 }

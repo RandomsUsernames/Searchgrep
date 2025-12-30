@@ -72,6 +72,10 @@ enum Commands {
         /// Hybrid mode - use BGE + CodeRankEmbed fusion for best quality
         #[arg(long)]
         hybrid: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Index files and watch for changes
@@ -147,6 +151,10 @@ enum Commands {
         /// List indexed files
         #[arg(long)]
         files: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run as MCP server for Claude Code integration
@@ -166,6 +174,10 @@ enum Commands {
         /// Remove a specific index by name
         #[arg(short, long)]
         store: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Compile codebase map for LLM consumption (90% token reduction)
@@ -215,6 +227,10 @@ enum Commands {
         /// Batch size for embedding requests
         #[arg(short, long, default_value = "50")]
         batch_size: usize,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Build and install searchgrep to ~/.cargo/bin
@@ -294,6 +310,7 @@ async fn main() -> Result<()> {
             store,
             code,
             hybrid,
+            json,
         }) => {
             search::run(search::SearchOptions {
                 pattern,
@@ -312,6 +329,7 @@ async fn main() -> Result<()> {
                 store,
                 code,
                 hybrid,
+                json,
             })
             .await?;
         }
@@ -355,15 +373,26 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
-        Some(Commands::Status { store, files }) => {
-            status::run(status::StatusOptions { store, files }).await?;
+        Some(Commands::Status { store, files, json }) => {
+            status::run(status::StatusOptions { store, files, json }).await?;
         }
         Some(Commands::McpServer) => {
             let mut server = mcp::McpServer::new();
             server.run()?;
         }
-        Some(Commands::Clean { list, all, store }) => {
-            clean::run(clean::CleanOptions { list, all, store }).await?;
+        Some(Commands::Clean {
+            list,
+            all,
+            store,
+            json,
+        }) => {
+            clean::run(clean::CleanOptions {
+                list,
+                all,
+                store,
+                json,
+            })
+            .await?;
         }
         Some(Commands::Compile {
             path,
@@ -386,6 +415,7 @@ async fn main() -> Result<()> {
             force,
             threads,
             batch_size,
+            json,
         }) => {
             index::run(index::IndexOptions {
                 path,
@@ -396,6 +426,7 @@ async fn main() -> Result<()> {
                 force,
                 threads,
                 batch_size,
+                json,
             })
             .await?;
         }
@@ -652,6 +683,7 @@ async fn main() -> Result<()> {
                 store,
                 code: false,
                 hybrid: false,
+                json: false,
             })
             .await?;
         }
@@ -975,6 +1007,7 @@ async fn main() -> Result<()> {
                     store: None,
                     code: false,
                     hybrid: false,
+                    json: false,
                 })
                 .await?;
             } else {

@@ -25,6 +25,7 @@ pub struct SearchOptions {
     pub store: Option<String>,
     pub code: bool,
     pub hybrid: bool,
+    pub json: bool,
 }
 
 pub async fn run(options: SearchOptions) -> Result<()> {
@@ -33,8 +34,18 @@ pub async fn run(options: SearchOptions) -> Result<()> {
     let store = VectorStore::load(options.store.as_deref())?;
 
     if store.chunk_count() == 0 {
-        println!("{}", "No files indexed yet. Run:".yellow());
-        println!("  searchgrep watch [path]");
+        if options.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "error": "No files indexed",
+                    "results": []
+                })
+            );
+        } else {
+            println!("{}", "No files indexed yet. Run:".yellow());
+            println!("  searchgrep watch [path]");
+        }
         return Ok(());
     }
 
@@ -52,12 +63,19 @@ pub async fn run(options: SearchOptions) -> Result<()> {
             .await?;
     }
 
-    // Start search animation
-    let animation = SearchAnimation::new(&options.pattern);
-    animation.start();
+    // Start search animation (skip if JSON output)
+    let animation = if !options.json {
+        let anim = SearchAnimation::new(&options.pattern);
+        anim.start();
+        Some(anim)
+    } else {
+        None
+    };
 
     // Generate query embedding based on mode
-    animation.update_stage("Generating embeddings...");
+    if let Some(ref anim) = animation {
+        anim.update_stage("Generating embeddings...");
+    }
 
     let (query_embedding, query_tokens) = if options.hybrid {
         // Use hybrid fusion model (BGE + CodeRankEmbed)
@@ -78,7 +96,9 @@ pub async fn run(options: SearchOptions) -> Result<()> {
     };
 
     // Search
-    animation.update_stage("Searching index...");
+    if let Some(ref anim) = animation {
+        anim.update_stage("Searching index...");
+    }
     let searcher = HybridSearcher::default();
     let file_types = options.file_types.as_ref().map(|v| v.as_slice());
 
@@ -97,14 +117,29 @@ pub async fn run(options: SearchOptions) -> Result<()> {
     );
 
     if results.is_empty() {
-        animation.finish(0, start_time.elapsed().as_millis());
-        println!("{}", "No results found".yellow());
+        if let Some(ref anim) = animation {
+            anim.finish(0, start_time.elapsed().as_millis());
+        }
+        if options.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "query": options.pattern,
+                    "results": [],
+                    "duration_ms": start_time.elapsed().as_millis()
+                })
+            );
+        } else {
+            println!("{}", "No results found".yellow());
+        }
         return Ok(());
     }
 
     // Rerank if enabled
     if options.rerank && results.len() > 1 {
-        animation.update_stage("Reranking results...");
+        if let Some(ref anim) = animation {
+            anim.update_stage("Reranking results...");
+        }
         let reranker = Reranker::new(config.clone());
         let results_clone = results.clone();
         results = match reranker
@@ -126,10 +161,36 @@ pub async fn run(options: SearchOptions) -> Result<()> {
 
     // Finish animation
     let duration = start_time.elapsed().as_millis();
-    animation.finish(results.len(), duration);
+    if let Some(ref anim) = animation {
+        anim.finish(results.len(), duration);
+    }
 
     // Display results
-    if options.answer {
+    if options.json {
+        // Output as JSON
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "file": r.chunk.file_path,
+                    "start_line": r.chunk.start_line,
+                    "end_line": r.chunk.end_line,
+                    "score": r.score,
+                    "content": if options.content { Some(&r.chunk.content) } else { None }
+                })
+            })
+            .collect();
+
+        println!(
+            "{}",
+            serde_json::json!({
+                "query": options.pattern,
+                "results": json_results,
+                "count": results.len(),
+                "duration_ms": duration
+            })
+        );
+    } else if options.answer {
         display_answer(&options.pattern, &results, &config).await?;
     } else {
         // Use the beautiful new UI

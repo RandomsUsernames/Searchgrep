@@ -20,6 +20,8 @@ pub struct IndexOptions {
     pub threads: usize,
     /// Batch size for embeddings
     pub batch_size: usize,
+    /// Output as JSON
+    pub json: bool,
 }
 
 impl Default for IndexOptions {
@@ -33,6 +35,7 @@ impl Default for IndexOptions {
             force: false,
             threads: 0,
             batch_size: 50,
+            json: false,
         }
     }
 }
@@ -52,18 +55,20 @@ pub async fn run(options: IndexOptions) -> Result<()> {
     };
 
     let tier_name = match tier {
-        IndexTier::Fast => "fast (BM25 only)",
+        IndexTier::Fast => "fast",
         IndexTier::Balanced => "balanced",
         IndexTier::Quality => "quality",
     };
 
-    println!(
-        "{} {} {}",
-        "⚡".yellow(),
-        "Indexing".cyan().bold(),
-        path_str.dimmed()
-    );
-    println!("   Mode: {}", tier_name.yellow());
+    if !options.json {
+        println!(
+            "{} {} {}",
+            "⚡".yellow(),
+            "Indexing".cyan().bold(),
+            path_str.dimmed()
+        );
+        println!("   Mode: {}", tier_name.yellow());
+    }
 
     let config = FastIndexConfig {
         tier,
@@ -75,6 +80,30 @@ pub async fn run(options: IndexOptions) -> Result<()> {
 
     let indexer = FastIndexer::new(config)?;
     let result = indexer.index(&path_str, options.store.as_deref()).await?;
+
+    // Output as JSON if requested
+    if options.json {
+        let files_per_sec = if result.duration_ms > 0 && result.indexed_files > 0 {
+            (result.indexed_files as f64 * 1000.0) / result.duration_ms as f64
+        } else {
+            0.0
+        };
+
+        println!(
+            "{}",
+            serde_json::json!({
+                "path": path_str,
+                "mode": tier_name,
+                "total_files": result.total_files,
+                "indexed_files": result.indexed_files,
+                "skipped_files": result.skipped_files,
+                "total_chunks": result.total_chunks,
+                "duration_ms": result.duration_ms,
+                "files_per_second": files_per_sec
+            })
+        );
+        return Ok(());
+    }
 
     // Display results
     println!();
