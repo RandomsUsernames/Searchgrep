@@ -290,6 +290,13 @@ enum Commands {
         #[arg(long)]
         mcp: bool,
     },
+
+    /// Install searchgrep as a skill/tool for AI coding tools (in addition to MCP)
+    Skill {
+        /// Tool to install skill for: opencode, or all
+        #[arg(default_value = "interactive")]
+        tool: String,
+    },
 }
 
 #[tokio::main]
@@ -725,10 +732,11 @@ async fn main() -> Result<()> {
                         std::fs::write(&config_path, new_content)?;
                     }
                 } else if config_type == "opencode" {
-                    // OpenCode uses JSON format in ~/.config/opencode/opencode.json
+                    // OpenCode uses JSON format with type, command array, and enabled
                     let mcp_config = serde_json::json!({
-                        "command": searchgrep_path,
-                        "args": ["mcp-server"]
+                        "type": "local",
+                        "command": [searchgrep_path, "mcp-server"],
+                        "enabled": true
                     });
 
                     let mut config: serde_json::Value = if config_path.exists() {
@@ -1124,6 +1132,120 @@ async fn main() -> Result<()> {
             if !mcp {
                 println!("  • Setup MCP: searchgrep mcp");
             }
+        }
+        Some(Commands::Skill { tool }) => {
+            use anyhow::Context;
+            use colored::Colorize;
+
+            let home = dirs::home_dir().context("Could not find home directory")?;
+
+            let tools: Vec<&str> = match tool.as_str() {
+                "interactive" => {
+                    println!("{}", "searchgrep Skill Setup".cyan().bold());
+                    println!();
+                    println!("Install searchgrep as a skill/tool for:");
+                    println!();
+                    println!("  {}  OpenCode", "1.".bold());
+                    println!();
+                    print!("Enter choice (1): ");
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    match input.trim() {
+                        "1" | "" => vec!["opencode"],
+                        _ => {
+                            println!("{} Invalid choice", "✗".red());
+                            return Ok(());
+                        }
+                    }
+                }
+                "opencode" => vec!["opencode"],
+                "all" => vec!["opencode"],
+                _ => {
+                    println!("{} Unknown tool: {}", "✗".red(), tool);
+                    println!("Available: opencode, all");
+                    return Ok(());
+                }
+            };
+
+            for tool_name in tools {
+                match tool_name {
+                    "opencode" => {
+                        let skill_dir = home.join(".config/opencode/tool");
+                        std::fs::create_dir_all(&skill_dir)?;
+
+                        let skill_content = r#"import { tool } from "@opencode-ai/plugin"
+
+const SKILL = `
+---
+name: searchgrep
+description: A semantic grep-like search tool for your local files. Uses AI embeddings for natural language code search. Much better than grep/ripgrep for understanding code meaning.
+license: MIT
+---
+
+## When to use this skill
+
+Whenever you need to search your local files semantically. Use this instead of grep/rg when you want to find code by meaning, not just text matching.
+
+## How to use this skill
+
+Use \`searchgrep\` to search your local files. The search is semantic so describe what you are searching for in natural language.
+
+### Do
+
+\`\`\`bash
+searchgrep search "authentication middleware"  # search in the current directory
+searchgrep search "database connection pooling" src/  # search in src directory
+searchgrep search -m 20 "error handling patterns"  # get more results
+searchgrep ask "how does the payment system work?"  # ask a question about code
+\`\`\`
+
+### Don't
+
+\`\`\`bash
+searchgrep search "foo"  # Too vague, use descriptive queries
+\`\`\`
+
+## Keywords
+search, grep, semantic search, code search, natural language search, ai search
+`;
+
+export default tool({
+  description: SKILL,
+  args: {
+    q: tool.schema.string().describe("The semantic search query."),
+    m: tool.schema.number().default(10).describe("The number of results to return."),
+    a: tool.schema.boolean().default(false).describe("If true, use 'ask' mode to generate an answer."),
+    p: tool.schema.string().optional().describe("Path to search in (defaults to current directory)."),
+  },
+  async execute(args) {
+    const cmd = args.a ? "ask" : "search";
+    const pathArg = args.p ? args.p : ".";
+    const result = await Bun.$`searchgrep ${cmd} -m ${args.m} ${args.q} ${pathArg}`.text();
+    return result.trim();
+  },
+})"#;
+
+                        let skill_path = skill_dir.join("searchgrep.ts");
+                        std::fs::write(&skill_path, skill_content)?;
+
+                        println!(
+                            "{} Installed searchgrep skill at {}",
+                            "✓".green().bold(),
+                            skill_path.display()
+                        );
+                    }
+                    _ => continue,
+                }
+            }
+
+            println!();
+            println!(
+                "{}",
+                "Restart your AI tool to use the searchgrep skill.".yellow()
+            );
         }
         None => {
             if let Some(pattern) = cli.pattern {
