@@ -91,6 +91,10 @@ program
   .description("Index your codebase for semantic search")
   .argument("[path]", "Path to index (defaults to current directory)")
   .option("--store <name>", "Use alternative store name")
+  .option("-f, --force", "Force reindex all files", false)
+  .option("-v, --verbose", "Show detailed output", false)
+  .option("--fast", "Fast mode - smaller model, 2-3x faster indexing", false)
+  .option("--quality", "Quality mode - higher accuracy, slower indexing", false)
   .action(async (path, options) => {
     await indexCommand(path, options);
   });

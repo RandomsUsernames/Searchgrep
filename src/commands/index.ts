@@ -15,11 +15,14 @@ import {
   isVendorFile,
   type ScalingConfig,
 } from "../lib/scaling.js";
+import { setSpeedMode } from "../lib/local-embeddings.js";
 
 interface IndexOptions {
   store?: string;
   force?: boolean; // Force reindex all files
   verbose?: boolean;
+  fast?: boolean; // Use fast mode (smaller model, larger batches)
+  quality?: boolean; // Use quality mode (fp32, slower but more accurate)
 }
 
 export async function indexCommand(
@@ -30,6 +33,23 @@ export async function indexCommand(
   const storeName = options.store || "searchgrep";
 
   console.log(chalk.cyan("\n🔍 Searchgrep") + " - Smart Codebase Indexer\n");
+
+  // Set embedding speed mode
+  if (options.fast) {
+    setSpeedMode("fast");
+    console.log(
+      chalk.yellow("⚡ Fast mode enabled (smaller model, faster indexing)\n"),
+    );
+  } else if (options.quality) {
+    setSpeedMode("quality");
+    console.log(
+      chalk.blue(
+        "🎯 Quality mode enabled (higher accuracy, slower indexing)\n",
+      ),
+    );
+  } else {
+    setSpeedMode("balanced");
+  }
 
   const spinner = ora("Scanning files...").start();
 
