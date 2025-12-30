@@ -587,8 +587,8 @@ async fn main() -> Result<()> {
                     "claude" => (home.join(".claude.json"), "claude"),
                     "cursor" => (home.join(".cursor/mcp.json"), "mcpServers"),
                     "windsurf" => (home.join(".codeium/windsurf/mcp_config.json"), "mcpServers"),
-                    "codex" => (home.join(".codex/mcp.json"), "mcpServers"),
-                    "opencode" => (home.join(".opencode/mcp.json"), "mcpServers"),
+                    "codex" => (home.join(".codex/config.toml"), "codex_toml"),
+                    "opencode" => (home.join(".config/opencode/opencode.json"), "opencode"),
                     "zed" => (home.join(".config/zed/settings.json"), "context_servers"),
                     "continue" => (home.join(".continue/config.json"), "experimental.modelContextProtocolServers"),
                     "cline" => (home.join("Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"), "mcpServers"),
@@ -689,8 +689,64 @@ async fn main() -> Result<()> {
 
                     let content = serde_json::to_string_pretty(&config)?;
                     std::fs::write(&config_path, content)?;
+                } else if config_type == "codex_toml" {
+                    // Codex uses TOML format in ~/.codex/config.toml
+                    let existing_content = if config_path.exists() {
+                        std::fs::read_to_string(&config_path)?
+                    } else {
+                        String::new()
+                    };
+
+                    // Check if searchgrep is already configured
+                    if existing_content.contains("[mcp_servers.searchgrep]") {
+                        // Update existing entry
+                        let updated = existing_content
+                            .lines()
+                            .filter(|line| {
+                                !line.contains("[mcp_servers.searchgrep]")
+                                    && !line.starts_with("command = \"searchgrep\"")
+                                    && !(line.starts_with("args = ") && line.contains("mcp"))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let new_content = format!(
+                            "{}\n\n[mcp_servers.searchgrep]\ncommand = \"{}\"\nargs = [\"mcp-server\"]\n",
+                            updated.trim(),
+                            searchgrep_path
+                        );
+                        std::fs::write(&config_path, new_content)?;
+                    } else {
+                        // Append new entry
+                        let new_content = format!(
+                            "{}\n\n[mcp_servers.searchgrep]\ncommand = \"{}\"\nargs = [\"mcp-server\"]\n",
+                            existing_content.trim(),
+                            searchgrep_path
+                        );
+                        std::fs::write(&config_path, new_content)?;
+                    }
+                } else if config_type == "opencode" {
+                    // OpenCode uses JSON format in ~/.config/opencode/opencode.json
+                    let mcp_config = serde_json::json!({
+                        "command": searchgrep_path,
+                        "args": ["mcp-server"]
+                    });
+
+                    let mut config: serde_json::Value = if config_path.exists() {
+                        let content = std::fs::read_to_string(&config_path)?;
+                        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+
+                    if config.get("mcp").is_none() {
+                        config["mcp"] = serde_json::json!({});
+                    }
+                    config["mcp"]["searchgrep"] = mcp_config;
+
+                    let content = serde_json::to_string_pretty(&config)?;
+                    std::fs::write(&config_path, content)?;
                 } else {
-                    // Standard mcpServers format (Claude, Cursor, Codex, Cline, etc.)
+                    // Standard mcpServers format (Cursor, Cline, etc.)
                     let mcp_config = serde_json::json!({
                         "command": searchgrep_path,
                         "args": ["mcp-server"],
