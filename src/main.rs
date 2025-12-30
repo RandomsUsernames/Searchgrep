@@ -483,9 +483,6 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                "all" => vec![
-                    "claude", "opencode", "cursor", "windsurf", "codex", "gemini",
-                ],
                 "claude" => vec!["claude"],
                 "opencode" => vec!["opencode"],
                 "cursor" => vec!["cursor"],
@@ -494,7 +491,7 @@ async fn main() -> Result<()> {
                 "gemini" => vec!["gemini"],
                 _ => {
                     println!("{} Unknown tool: {}", "✗".red(), tool);
-                    println!("Available: claude, opencode, cursor, windsurf, codex, gemini, all");
+                    println!("Available: claude, opencode, cursor, windsurf, codex, gemini");
                     return Ok(());
                 }
             };
