@@ -584,7 +584,7 @@ async fn main() -> Result<()> {
             for tool_name in tools {
                 // Each tool has its own config path and format
                 let (config_path, config_type) = match tool_name {
-                    "claude" => (home.join(".claude/mcp_servers.json"), "mcpServers"),
+                    "claude" => (home.join(".claude.json"), "claude"),
                     "cursor" => (home.join(".cursor/mcp.json"), "mcpServers"),
                     "windsurf" => (home.join(".codeium/windsurf/mcp_config.json"), "mcpServers"),
                     "codex" => (home.join(".codex/mcp.json"), "mcpServers"),
@@ -607,8 +607,37 @@ async fn main() -> Result<()> {
                     std::fs::create_dir_all(parent)?;
                 }
 
-                // Zed uses a different config structure
-                if config_type == "context_servers" {
+                // Claude Code uses ~/.claude.json with projects[home]["mcpServers"] structure
+                if config_type == "claude" {
+                    let mcp_config = serde_json::json!({
+                        "command": searchgrep_path,
+                        "args": ["mcp-server"],
+                        "env": {}
+                    });
+
+                    let mut config: serde_json::Value = if config_path.exists() {
+                        let content = std::fs::read_to_string(&config_path)?;
+                        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+
+                    let home_str = home.to_string_lossy().to_string();
+                    if config.get("projects").is_none() {
+                        config["projects"] = serde_json::json!({});
+                    }
+                    if config["projects"].get(&home_str).is_none() {
+                        config["projects"][&home_str] = serde_json::json!({});
+                    }
+                    if config["projects"][&home_str].get("mcpServers").is_none() {
+                        config["projects"][&home_str]["mcpServers"] = serde_json::json!({});
+                    }
+                    config["projects"][&home_str]["mcpServers"]["searchgrep"] = mcp_config;
+
+                    let content = serde_json::to_string_pretty(&config)?;
+                    std::fs::write(&config_path, content)?;
+                } else if config_type == "context_servers" {
+                    // Zed uses a different config structure
                     let zed_config = serde_json::json!({
                         "command": searchgrep_path,
                         "args": ["mcp-server"]
@@ -898,7 +927,7 @@ async fn main() -> Result<()> {
 
             for tool_name in tools {
                 let (config_path, config_type) = match tool_name {
-                    "claude" => (home.join(".claude/mcp_servers.json"), "mcpServers"),
+                    "claude" => (home.join(".claude.json"), "claude"),
                     "cursor" => (home.join(".cursor/mcp.json"), "mcpServers"),
                     "windsurf" => (home.join(".codeium/windsurf/mcp_config.json"), "mcpServers"),
                     "codex" => (home.join(".codex/mcp.json"), "mcpServers"),
@@ -924,7 +953,16 @@ async fn main() -> Result<()> {
                 let mut config: serde_json::Value =
                     serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
 
-                let removed = if config_type == "context_servers" {
+                let removed = if config_type == "claude" {
+                    let home_str = home.to_string_lossy().to_string();
+                    if let Some(servers) =
+                        config["projects"][&home_str]["mcpServers"].as_object_mut()
+                    {
+                        servers.remove("searchgrep").is_some()
+                    } else {
+                        false
+                    }
+                } else if config_type == "context_servers" {
                     if let Some(servers) = config["context_servers"].as_object_mut() {
                         servers.remove("searchgrep").is_some()
                     } else {
@@ -1008,12 +1046,7 @@ async fn main() -> Result<()> {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| "searchgrep".to_string());
 
-                let config_path = home.join(".claude/mcp_servers.json");
-
-                // Create directory if needed
-                if let Some(parent) = config_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
+                let config_path = home.join(".claude.json");
 
                 let mut config: serde_json::Value = if config_path.exists() {
                     let content = std::fs::read_to_string(&config_path)?;
@@ -1022,10 +1055,17 @@ async fn main() -> Result<()> {
                     serde_json::json!({})
                 };
 
-                if config.get("mcpServers").is_none() {
-                    config["mcpServers"] = serde_json::json!({});
+                let home_str = home.to_string_lossy().to_string();
+                if config.get("projects").is_none() {
+                    config["projects"] = serde_json::json!({});
                 }
-                config["mcpServers"]["searchgrep"] = serde_json::json!({
+                if config["projects"].get(&home_str).is_none() {
+                    config["projects"][&home_str] = serde_json::json!({});
+                }
+                if config["projects"][&home_str].get("mcpServers").is_none() {
+                    config["projects"][&home_str]["mcpServers"] = serde_json::json!({});
+                }
+                config["projects"][&home_str]["mcpServers"]["searchgrep"] = serde_json::json!({
                     "command": searchgrep_path,
                     "args": ["mcp-server"],
                     "env": {}
