@@ -503,13 +503,15 @@ async fn main() -> Result<()> {
             });
 
             for tool_name in tools {
-                let config_path = match tool_name {
-                    "claude" => home.join(".claude/mcp_servers.json"),
-                    "opencode" => home.join(".opencode/mcp.json"),
-                    "cursor" => home.join(".cursor/mcp.json"),
-                    "windsurf" => home.join(".windsurf/mcp.json"),
-                    "codex" => home.join(".codex/mcp.json"),
-                    "gemini" => home.join(".gemini/mcp.json"),
+                // Claude Code uses ~/.claude.json with nested project config
+                // Other tools use their own mcp.json files
+                let (config_path, is_claude) = match tool_name {
+                    "claude" => (home.join(".claude.json"), true),
+                    "opencode" => (home.join(".opencode/mcp.json"), false),
+                    "cursor" => (home.join(".cursor/mcp.json"), false),
+                    "windsurf" => (home.join(".windsurf/mcp.json"), false),
+                    "codex" => (home.join(".codex/mcp.json"), false),
+                    "gemini" => (home.join(".gemini/mcp.json"), false),
                     _ => continue,
                 };
 
@@ -526,11 +528,26 @@ async fn main() -> Result<()> {
                     serde_json::json!({})
                 };
 
-                // Add searchgrep to mcpServers
-                if config.get("mcpServers").is_none() {
-                    config["mcpServers"] = serde_json::json!({});
+                if is_claude {
+                    // Claude Code stores MCP servers under projects."/Users/xxx".mcpServers
+                    let home_str = home.to_string_lossy().to_string();
+                    if config.get("projects").is_none() {
+                        config["projects"] = serde_json::json!({});
+                    }
+                    if config["projects"].get(&home_str).is_none() {
+                        config["projects"][&home_str] = serde_json::json!({});
+                    }
+                    if config["projects"][&home_str].get("mcpServers").is_none() {
+                        config["projects"][&home_str]["mcpServers"] = serde_json::json!({});
+                    }
+                    config["projects"][&home_str]["mcpServers"]["searchgrep"] = mcp_config.clone();
+                } else {
+                    // Other tools use flat mcpServers
+                    if config.get("mcpServers").is_none() {
+                        config["mcpServers"] = serde_json::json!({});
+                    }
+                    config["mcpServers"]["searchgrep"] = mcp_config.clone();
                 }
-                config["mcpServers"]["searchgrep"] = mcp_config.clone();
 
                 // Write config
                 let content = serde_json::to_string_pretty(&config)?;
