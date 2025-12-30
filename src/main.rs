@@ -456,14 +456,15 @@ async fn main() -> Result<()> {
                 "interactive" => {
                     println!("{}", "searchgrep MCP Setup".cyan().bold());
                     println!();
-                    println!("Select AI tools to configure:");
-                    println!("  {} Claude Code (claude)", "1.".bold());
+                    println!("Select AI tool to configure:");
+                    println!("  {} Claude Code", "1.".bold());
                     println!("  {} OpenCode", "2.".bold());
                     println!("  {} Cursor", "3.".bold());
                     println!("  {} Windsurf", "4.".bold());
-                    println!("  {} All of the above", "5.".bold());
+                    println!("  {} Codex (OpenAI)", "5.".bold());
+                    println!("  {} Gemini CLI", "6.".bold());
                     println!();
-                    print!("Enter choice (1-5): ");
+                    print!("Enter choice (1-6): ");
                     io::stdout().flush()?;
 
                     let mut input = String::new();
@@ -474,21 +475,26 @@ async fn main() -> Result<()> {
                         "2" => vec!["opencode"],
                         "3" => vec!["cursor"],
                         "4" => vec!["windsurf"],
-                        "5" => vec!["claude", "opencode", "cursor", "windsurf"],
+                        "5" => vec!["codex"],
+                        "6" => vec!["gemini"],
                         _ => {
                             println!("{} Invalid choice", "✗".red());
                             return Ok(());
                         }
                     }
                 }
-                "all" => vec!["claude", "opencode", "cursor", "windsurf"],
+                "all" => vec![
+                    "claude", "opencode", "cursor", "windsurf", "codex", "gemini",
+                ],
                 "claude" => vec!["claude"],
                 "opencode" => vec!["opencode"],
                 "cursor" => vec!["cursor"],
                 "windsurf" => vec!["windsurf"],
+                "codex" => vec!["codex"],
+                "gemini" => vec!["gemini"],
                 _ => {
                     println!("{} Unknown tool: {}", "✗".red(), tool);
-                    println!("Available: claude, opencode, cursor, windsurf, all");
+                    println!("Available: claude, opencode, cursor, windsurf, codex, gemini, all");
                     return Ok(());
                 }
             };
@@ -505,6 +511,8 @@ async fn main() -> Result<()> {
                     "opencode" => home.join(".opencode/mcp.json"),
                     "cursor" => home.join(".cursor/mcp.json"),
                     "windsurf" => home.join(".windsurf/mcp.json"),
+                    "codex" => home.join(".codex/mcp.json"),
+                    "gemini" => home.join(".gemini/mcp.json"),
                     _ => continue,
                 };
 
