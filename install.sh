@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="kanayochukew/searchgrep-rs"
+REPO="RandomsUsernames/Searchgrep"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
 echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"

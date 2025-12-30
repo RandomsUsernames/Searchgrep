@@ -1,21 +1,21 @@
 class Searchgrep < Formula
   desc "Semantic grep for the AI era - natural language code search with MCP server"
-  homepage "https://github.com/kanayochukew/searchgrep-rs"
+  homepage "https://github.com/RandomsUsernames/Searchgrep"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/kanayochukew/searchgrep-rs/releases/download/v0.1.0/searchgrep-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/RandomsUsernames/Searchgrep/releases/download/v0.1.0/searchgrep-aarch64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_SHA256_ARM64"
     else
-      url "https://github.com/kanayochukew/searchgrep-rs/releases/download/v0.1.0/searchgrep-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/RandomsUsernames/Searchgrep/releases/download/v0.1.0/searchgrep-x86_64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_SHA256_X64"
     end
   end
 
   on_linux do
-    url "https://github.com/kanayochukew/searchgrep-rs/releases/download/v0.1.0/searchgrep-x86_64-unknown-linux-gnu.tar.gz"
+    url "https://github.com/RandomsUsernames/Searchgrep/releases/download/v0.1.0/searchgrep-x86_64-unknown-linux-gnu.tar.gz"
     sha256 "PLACEHOLDER_SHA256_LINUX"
   end
 
