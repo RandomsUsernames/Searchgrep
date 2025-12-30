@@ -622,17 +622,11 @@ async fn main() -> Result<()> {
                         serde_json::json!({})
                     };
 
-                    // Use "/" root project for global availability across all projects
-                    if config.get("projects").is_none() {
-                        config["projects"] = serde_json::json!({});
+                    // Claude Code uses top-level mcpServers for user config
+                    if config.get("mcpServers").is_none() {
+                        config["mcpServers"] = serde_json::json!({});
                     }
-                    if config["projects"].get("/").is_none() {
-                        config["projects"]["/"] = serde_json::json!({});
-                    }
-                    if config["projects"]["/"].get("mcpServers").is_none() {
-                        config["projects"]["/"]["mcpServers"] = serde_json::json!({});
-                    }
-                    config["projects"]["/"]["mcpServers"]["searchgrep"] = mcp_config;
+                    config["mcpServers"]["searchgrep"] = mcp_config;
 
                     let content = serde_json::to_string_pretty(&config)?;
                     std::fs::write(&config_path, content)?;
@@ -954,8 +948,8 @@ async fn main() -> Result<()> {
                     serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
 
                 let removed = if config_type == "claude" {
-                    // Use "/" root project for global availability
-                    if let Some(servers) = config["projects"]["/"]["mcpServers"].as_object_mut() {
+                    // Claude Code uses top-level mcpServers
+                    if let Some(servers) = config["mcpServers"].as_object_mut() {
                         servers.remove("searchgrep").is_some()
                     } else {
                         false
@@ -1053,17 +1047,11 @@ async fn main() -> Result<()> {
                     serde_json::json!({})
                 };
 
-                // Use "/" root project for global availability across all projects
-                if config.get("projects").is_none() {
-                    config["projects"] = serde_json::json!({});
+                // Claude Code uses top-level mcpServers for user config
+                if config.get("mcpServers").is_none() {
+                    config["mcpServers"] = serde_json::json!({});
                 }
-                if config["projects"].get("/").is_none() {
-                    config["projects"]["/"] = serde_json::json!({});
-                }
-                if config["projects"]["/"].get("mcpServers").is_none() {
-                    config["projects"]["/"]["mcpServers"] = serde_json::json!({});
-                }
-                config["projects"]["/"]["mcpServers"]["searchgrep"] = serde_json::json!({
+                config["mcpServers"]["searchgrep"] = serde_json::json!({
                     "command": searchgrep_path,
                     "args": ["mcp-server"],
                     "env": {}
