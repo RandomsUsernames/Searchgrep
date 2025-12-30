@@ -7,31 +7,24 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { VectorStore } from "./lib/store.js";
 import { createFileSystem } from "./lib/file.js";
-import { loadConfig } from "./lib/config.js";
 
 const server = new Server(
   {
     name: "searchgrep",
-    version: "1.0.0",
+    version: "1.1.0",
   },
   {
     capabilities: {
       tools: {},
     },
-  }
+  },
 );
 
 let store: VectorStore | null = null;
 
-async function getStore(cwd?: string): Promise<VectorStore> {
-  const config = loadConfig(cwd);
+function getStore(): VectorStore {
   if (!store) {
-    store = new VectorStore({
-      storeName: "default",
-      embeddingProvider: config.embeddingProvider,
-      openaiApiKey: config.openaiApiKey,
-      embeddingModel: config.embeddingModel,
-    });
+    store = new VectorStore("searchgrep-mcp");
   }
   return store;
 }
@@ -49,15 +42,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             query: {
               type: "string",
-              description: "Natural language search query (e.g., 'authentication middleware', 'database connection handling')",
+              description:
+                "Natural language search query (e.g., 'authentication middleware', 'database connection handling')",
             },
             maxResults: {
               type: "number",
               description: "Maximum number of results to return (default: 10)",
-            },
-            path: {
-              type: "string",
-              description: "Directory path to search in (default: current directory)",
             },
           },
           required: ["query"],
@@ -72,7 +62,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             path: {
               type: "string",
-              description: "Directory path to index (default: current directory)",
+              description:
+                "Directory path to index (default: current directory)",
             },
           },
         },
@@ -82,12 +73,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Get the current index status and statistics.",
         inputSchema: {
           type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Directory path to check status for",
-            },
-          },
+          properties: {},
         },
       },
     ],
@@ -103,9 +89,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "search": {
         const query = args?.query as string;
         const maxResults = (args?.maxResults as number) || 10;
-        const path = args?.path as string | undefined;
 
-        const s = await getStore(path);
+        const s = getStore();
         const results = await s.search(query, maxResults);
 
         if (results.length === 0) {
@@ -122,9 +107,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const formattedResults = results.map((r, i) => ({
           rank: i + 1,
           file: r.path,
-          lines: `${r.startLine}-${r.endLine}`,
+          lines: `${r.lineStart || 1}-${r.lineEnd || 1}`,
           score: (r.score * 100).toFixed(2) + "%",
-          content: r.content.slice(0, 500) + (r.content.length > 500 ? "..." : ""),
+          content:
+            (r.chunk || r.content || "").slice(0, 500) +
+            ((r.chunk || r.content || "").length > 500 ? "..." : ""),
         }));
 
         return {
@@ -142,14 +129,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const cwd = path || process.cwd();
 
         const fs = createFileSystem({ cwd });
-        const s = await getStore(cwd);
+        const s = getStore();
 
         const files = await fs.getAllFiles();
         let indexed = 0;
 
         for (const file of files) {
           try {
-            await s.upsertFile(file.path, file.content, file.lastModified);
+            const hash = Buffer.from(file.content)
+              .toString("base64")
+              .slice(0, 32);
+            await s.uploadFile(
+              file.path,
+              file.content,
+              hash,
+              file.content.length,
+              file.lastModified,
+            );
             indexed++;
           } catch (e) {
             // Skip files that fail to index
@@ -167,9 +163,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "status": {
-        const path = args?.path as string | undefined;
-        const s = await getStore(path);
-        const stats = await s.getStats();
+        const s = getStore();
+        const info = s.getInfo();
 
         return {
           content: [
@@ -177,13 +172,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text" as const,
               text: JSON.stringify(
                 {
-                  totalFiles: stats.totalFiles,
-                  totalChunks: stats.totalChunks,
-                  totalSize: stats.totalSize,
-                  lastUpdated: stats.lastUpdated,
+                  totalFiles: info.fileCount,
+                  totalSize: info.totalSize,
+                  lastUpdated: new Date(info.lastUpdated).toISOString(),
                 },
                 null,
-                2
+                2,
               ),
             },
           ],

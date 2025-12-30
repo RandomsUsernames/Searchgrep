@@ -1,0 +1,4 @@
+# Requirements for the local embedding server
+sentence-transformers>=2.2.0
+torch>=2.0.0
+transformers>=4.35.0
