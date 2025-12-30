@@ -4,9 +4,11 @@
 
 use anyhow::Result;
 use serde_json::{json, Value};
+use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
-use crate::core::config::Config;
+use crate::core::codemap::CodeMap;
 use crate::core::hybrid_embedder::HybridEmbedder;
 use crate::core::local_embeddings::{LocalEmbedder, SpeedMode};
 use crate::core::search::HybridSearcher;
@@ -150,6 +152,71 @@ impl McpServer {
                     "required": ["path"]
                 }),
             },
+            ToolDefinition {
+                name: "get_codebase_map".to_string(),
+                description: "Get a compact semantic map of the codebase. Returns all symbols (functions, structs, classes) with signatures - 90% fewer tokens than reading files. Use this FIRST to understand codebase structure before reading individual files.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Directory path (defaults to current indexed directory)"
+                        },
+                        "minimal": {
+                            "type": "boolean",
+                            "description": "Return ultra-compact view (just function names per file)",
+                            "default": false
+                        }
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "search_symbols".to_string(),
+                description: "Search for symbols (functions, structs, classes) by name or signature. Much faster than grep for finding specific code elements.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Symbol name or signature to search for"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory path (defaults to current indexed directory)"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum results to return (default: 20)",
+                            "default": 20
+                        }
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "expand_symbol".to_string(),
+                description: "Get detailed info about a specific symbol including its dependencies and dependents. Use after search_symbols to understand code relationships.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "symbol_id": {
+                            "type": "string",
+                            "description": "Symbol ID in format 'file:name' (from search_symbols results)"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory path (defaults to current indexed directory)"
+                        },
+                        "include_code": {
+                            "type": "boolean",
+                            "description": "Include source code snippet for the symbol",
+                            "default": false
+                        }
+                    },
+                    "required": ["symbol_id"]
+                }),
+            },
         ];
 
         let result = ToolsListResult { tools };
@@ -174,6 +241,9 @@ impl McpServer {
         let result = match call.name.as_str() {
             "semantic_search" => self.execute_semantic_search(call.arguments),
             "index_directory" => self.execute_index_directory(call.arguments),
+            "get_codebase_map" => self.execute_get_codebase_map(call.arguments),
+            "search_symbols" => self.execute_search_symbols(call.arguments),
+            "expand_symbol" => self.execute_expand_symbol(call.arguments),
             _ => ToolCallResult::error(format!("Unknown tool: {}", call.name)),
         };
 
@@ -337,6 +407,225 @@ impl McpServer {
                 path
             )),
             Err(e) => ToolCallResult::error(format!("Indexing failed: {}", e)),
+        }
+    }
+
+    fn execute_get_codebase_map(&self, args: Option<Value>) -> ToolCallResult {
+        let args = args.unwrap_or(json!({}));
+
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ".".to_string());
+
+        let minimal = args
+            .get("minimal")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let root = match Path::new(&path).canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolCallResult::error(format!("Invalid path: {}", e)),
+        };
+
+        // Load the codebase map
+        match CodeMap::load(&root) {
+            Ok(Some(map)) => {
+                let overview = if minimal {
+                    map.to_minimal_overview()
+                } else {
+                    map.to_compact_overview()
+                };
+
+                let stats = map.stats();
+                let token_estimate = overview.len() / 4;
+
+                let mut output = format!(
+                    "# Codebase Map\n\n{} files, {} symbols (~{} tokens)\n\n",
+                    stats.files, stats.symbols, token_estimate
+                );
+                output.push_str(&overview);
+
+                ToolCallResult::success(output)
+            }
+            Ok(None) => {
+                ToolCallResult::error(
+                    "No codebase map found. Run 'searchgrep compile' first to generate a map of your codebase.".to_string()
+                )
+            }
+            Err(e) => ToolCallResult::error(format!("Failed to load map: {}", e)),
+        }
+    }
+
+    fn execute_search_symbols(&self, args: Option<Value>) -> ToolCallResult {
+        let args = match args {
+            Some(a) => a,
+            None => return ToolCallResult::error("Missing arguments".to_string()),
+        };
+
+        let query = match args.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q.to_string(),
+            None => return ToolCallResult::error("Missing required 'query' argument".to_string()),
+        };
+
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ".".to_string());
+
+        let max_results = args
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(20) as usize;
+
+        let root = match Path::new(&path).canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolCallResult::error(format!("Invalid path: {}", e)),
+        };
+
+        match CodeMap::load(&root) {
+            Ok(Some(map)) => {
+                let results = map.search(&query);
+
+                if results.is_empty() {
+                    return ToolCallResult::success(format!(
+                        "No symbols found matching '{}'\n\nTry:\n- Different search terms\n- Run 'searchgrep compile' to update the map",
+                        query
+                    ));
+                }
+
+                let mut output = format!(
+                    "Found {} symbols matching '{}':\n\n",
+                    results.len().min(max_results),
+                    query
+                );
+
+                for (i, sym) in results.iter().take(max_results).enumerate() {
+                    output.push_str(&format!(
+                        "{}. [{}] {}\n   File: {}:{}\n   ID: {}\n",
+                        i + 1,
+                        sym.kind.as_str(),
+                        sym.signature,
+                        sym.file,
+                        sym.line,
+                        sym.id
+                    ));
+                    if !sym.summary.is_empty() {
+                        output.push_str(&format!("   Summary: {}\n", sym.summary));
+                    }
+                    output.push('\n');
+                }
+
+                ToolCallResult::success(output)
+            }
+            Ok(None) => ToolCallResult::error(
+                "No codebase map found. Run 'searchgrep compile' first.".to_string(),
+            ),
+            Err(e) => ToolCallResult::error(format!("Failed to load map: {}", e)),
+        }
+    }
+
+    fn execute_expand_symbol(&self, args: Option<Value>) -> ToolCallResult {
+        let args = match args {
+            Some(a) => a,
+            None => return ToolCallResult::error("Missing arguments".to_string()),
+        };
+
+        let symbol_id = match args.get("symbol_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => {
+                return ToolCallResult::error("Missing required 'symbol_id' argument".to_string())
+            }
+        };
+
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ".".to_string());
+
+        let include_code = args
+            .get("include_code")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let root = match Path::new(&path).canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolCallResult::error(format!("Invalid path: {}", e)),
+        };
+
+        match CodeMap::load(&root) {
+            Ok(Some(map)) => {
+                match map.expand(&symbol_id) {
+                    Some(expanded) => {
+                        let sym = expanded.symbol;
+                        let mut output = format!(
+                            "# {} {}\n\nFile: {}:{}\nKind: {}\nSignature: {}\n",
+                            sym.kind.as_str(),
+                            sym.name,
+                            sym.file,
+                            sym.line,
+                            sym.kind.as_str(),
+                            sym.signature
+                        );
+
+                        if !sym.summary.is_empty() {
+                            output.push_str(&format!("Summary: {}\n", sym.summary));
+                        }
+
+                        if !expanded.dependencies.is_empty() {
+                            output.push_str("\n## Dependencies (calls/uses):\n");
+                            for dep in &expanded.dependencies {
+                                output.push_str(&format!("  - {} ({})\n", dep.name, dep.file));
+                            }
+                        }
+
+                        if !expanded.dependents.is_empty() {
+                            output.push_str("\n## Dependents (called by):\n");
+                            for dep in &expanded.dependents {
+                                output.push_str(&format!("  - {} ({})\n", dep.name, dep.file));
+                            }
+                        }
+
+                        // Include source code if requested
+                        if include_code {
+                            let file_path = root.join(&sym.file);
+                            if file_path.exists() {
+                                if let Ok(content) = fs::read_to_string(&file_path) {
+                                    let lines: Vec<&str> = content.lines().collect();
+                                    let start = sym.line.saturating_sub(1);
+                                    let end = (start + 30).min(lines.len()); // Max 30 lines
+
+                                    output.push_str("\n## Source Code:\n```\n");
+                                    for (i, line) in lines[start..end].iter().enumerate() {
+                                        output.push_str(&format!(
+                                            "{:4} | {}\n",
+                                            start + i + 1,
+                                            line
+                                        ));
+                                    }
+                                    if end < lines.len() {
+                                        output.push_str("     | ...\n");
+                                    }
+                                    output.push_str("```\n");
+                                }
+                            }
+                        }
+
+                        ToolCallResult::success(output)
+                    }
+                    None => ToolCallResult::error(format!(
+                        "Symbol '{}' not found. Use search_symbols to find valid symbol IDs.",
+                        symbol_id
+                    )),
+                }
+            }
+            Ok(None) => ToolCallResult::error(
+                "No codebase map found. Run 'searchgrep compile' first.".to_string(),
+            ),
+            Err(e) => ToolCallResult::error(format!("Failed to load map: {}", e)),
         }
     }
 }

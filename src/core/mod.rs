@@ -1,9 +1,11 @@
 pub mod chunker;
+pub mod codemap;
 pub mod config;
 pub mod embeddings;
 pub mod hybrid_embedder;
 pub mod local_embeddings;
 pub mod nomic_bert;
+pub mod parser;
 pub mod reranker;
 pub mod scanner;
 pub mod search;

@@ -6,7 +6,7 @@ mod core;
 mod mcp;
 pub mod ui;
 
-use commands::{clean, config, search, status, watch};
+use commands::{clean, compile, config, search, status, watch};
 
 #[derive(Parser)]
 #[command(name = "searchgrep")]
@@ -167,6 +167,20 @@ enum Commands {
         store: Option<String>,
     },
 
+    /// Compile codebase map for LLM consumption (90% token reduction)
+    Compile {
+        /// Path to compile (defaults to current directory)
+        path: Option<String>,
+
+        /// Show the compiled map
+        #[arg(short, long)]
+        show: bool,
+
+        /// Show minimal overview (just function names)
+        #[arg(short, long)]
+        minimal: bool,
+    },
+
     /// Ask a question about your codebase
     #[command(alias = "a")]
     Ask {
@@ -278,6 +292,18 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Clean { list, all, store }) => {
             clean::run(clean::CleanOptions { list, all, store }).await?;
+        }
+        Some(Commands::Compile {
+            path,
+            show,
+            minimal,
+        }) => {
+            compile::run(compile::CompileOptions {
+                path,
+                show,
+                minimal,
+            })
+            .await?;
         }
         Some(Commands::Ask {
             question,
