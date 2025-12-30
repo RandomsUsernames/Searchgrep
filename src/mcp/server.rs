@@ -472,14 +472,12 @@ impl McpServer {
             _ => SpeedMode::Balanced,
         };
 
-        // Run indexing synchronously (blocking)
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => return ToolCallResult::error(format!("Runtime error: {}", e)),
-        };
-
-        match rt.block_on(async {
-            crate::commands::watch::sync_files(&path, None, speed_mode).await
+        // Run indexing using the existing tokio runtime
+        let handle = tokio::runtime::Handle::current();
+        match tokio::task::block_in_place(|| {
+            handle.block_on(async {
+                crate::commands::watch::sync_files(&path, None, speed_mode).await
+            })
         }) {
             Ok(_) => ToolCallResult::success(format!(
                 "Successfully indexed directory: {}\n\nYou can now use semantic_search to find code.",
