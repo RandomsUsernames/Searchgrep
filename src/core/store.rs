@@ -160,6 +160,10 @@ impl VectorStore {
         self.chunks.len()
     }
 
+    pub fn list_files(&self) -> Vec<String> {
+        self.files.keys().cloned().collect()
+    }
+
     pub fn all_chunks(&self) -> impl Iterator<Item = &FileChunk> {
         self.chunks.values()
     }

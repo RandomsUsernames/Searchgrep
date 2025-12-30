@@ -217,6 +217,81 @@ impl McpServer {
                     "required": ["symbol_id"]
                 }),
             },
+            ToolDefinition {
+                name: "find_similar_code".to_string(),
+                description: "Find code similar to a given snippet or file. Useful for finding duplicates, similar patterns, or related implementations.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "Code snippet to find similar code for"
+                        },
+                        "file": {
+                            "type": "string",
+                            "description": "Or: path to a file to find similar files to"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum results to return (default: 10)",
+                            "default": 10
+                        }
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "ask_codebase".to_string(),
+                description: "Ask a natural language question about the codebase and get an AI-synthesized answer based on relevant code. Best for understanding how things work.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "Question about the codebase (e.g., 'How does authentication work?', 'Where are API routes defined?')"
+                        },
+                        "max_context": {
+                            "type": "integer",
+                            "description": "Maximum number of code snippets to use as context (default: 5)",
+                            "default": 5
+                        }
+                    },
+                    "required": ["question"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_file_context".to_string(),
+                description: "Get rich context about a specific file including its imports, exports, dependencies, and role in the codebase.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file to get context for"
+                        },
+                        "include_content": {
+                            "type": "boolean",
+                            "description": "Include file content in response",
+                            "default": false
+                        }
+                    },
+                    "required": ["file_path"]
+                }),
+            },
+            ToolDefinition {
+                name: "list_indexed_files".to_string(),
+                description: "List all files currently indexed for semantic search. Useful to check what's available to search.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Optional glob pattern to filter files (e.g., '*.rs', 'src/**/*.ts')"
+                        }
+                    },
+                    "required": []
+                }),
+            },
         ];
 
         let result = ToolsListResult { tools };
@@ -244,6 +319,10 @@ impl McpServer {
             "get_codebase_map" => self.execute_get_codebase_map(call.arguments),
             "search_symbols" => self.execute_search_symbols(call.arguments),
             "expand_symbol" => self.execute_expand_symbol(call.arguments),
+            "find_similar_code" => self.execute_find_similar_code(call.arguments),
+            "ask_codebase" => self.execute_ask_codebase(call.arguments),
+            "get_file_context" => self.execute_get_file_context(call.arguments),
+            "list_indexed_files" => self.execute_list_indexed_files(call.arguments),
             _ => ToolCallResult::error(format!("Unknown tool: {}", call.name)),
         };
 
@@ -627,6 +706,354 @@ impl McpServer {
             ),
             Err(e) => ToolCallResult::error(format!("Failed to load map: {}", e)),
         }
+    }
+
+    fn execute_find_similar_code(&self, args: Option<Value>) -> ToolCallResult {
+        let args = args.unwrap_or(json!({}));
+
+        let code = args.get("code").and_then(|v| v.as_str());
+        let file = args.get("file").and_then(|v| v.as_str());
+
+        let max_results = args
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        let query_text = match (code, file) {
+            (Some(c), _) => c.to_string(),
+            (_, Some(f)) => match fs::read_to_string(f) {
+                Ok(content) => content,
+                Err(e) => return ToolCallResult::error(format!("Failed to read file: {}", e)),
+            },
+            (None, None) => {
+                return ToolCallResult::error(
+                    "Either 'code' or 'file' argument is required".to_string(),
+                );
+            }
+        };
+
+        // Load the vector store
+        let store = match VectorStore::load(None) {
+            Ok(s) => s,
+            Err(e) => return ToolCallResult::error(format!("Failed to load index: {}", e)),
+        };
+
+        if store.chunk_count() == 0 {
+            return ToolCallResult::error(
+                "No files indexed. Run 'searchgrep watch <path>' first.".to_string(),
+            );
+        }
+
+        // Generate embedding for the code
+        let query_embedding = match LocalEmbedder::with_speed_mode(SpeedMode::Code) {
+            Ok(mut embedder) => match embedder.embed_query(&query_text) {
+                Ok(emb) => emb,
+                Err(e) => return ToolCallResult::error(format!("Embedding failed: {}", e)),
+            },
+            Err(e) => return ToolCallResult::error(format!("Model load failed: {}", e)),
+        };
+
+        // Search for similar code
+        let searcher = HybridSearcher::default();
+        let results = searcher.search(
+            &store,
+            &query_embedding,
+            &query_text,
+            max_results,
+            None,
+            false,
+            None,
+        );
+
+        if results.is_empty() {
+            return ToolCallResult::success("No similar code found.".to_string());
+        }
+
+        let mut output = format!("Found {} similar code snippets:\n\n", results.len());
+
+        for (i, result) in results.iter().enumerate() {
+            let score_pct = (result.score * 100.0) as u32;
+            output.push_str(&format!(
+                "{}. {} ({}% similar)\n",
+                i + 1,
+                result.chunk.file_path,
+                score_pct
+            ));
+            output.push_str(&format!(
+                "   Lines {}-{}\n",
+                result.chunk.start_line, result.chunk.end_line
+            ));
+            output.push_str("   ```\n");
+            for line in result.chunk.content.lines().take(10) {
+                output.push_str(&format!("   {}\n", line));
+            }
+            if result.chunk.content.lines().count() > 10 {
+                output.push_str("   ...\n");
+            }
+            output.push_str("   ```\n\n");
+        }
+
+        ToolCallResult::success(output)
+    }
+
+    fn execute_ask_codebase(&self, args: Option<Value>) -> ToolCallResult {
+        let args = match args {
+            Some(a) => a,
+            None => return ToolCallResult::error("Missing arguments".to_string()),
+        };
+
+        let question = match args.get("question").and_then(|v| v.as_str()) {
+            Some(q) => q.to_string(),
+            None => {
+                return ToolCallResult::error("Missing required 'question' argument".to_string())
+            }
+        };
+
+        let max_context = args
+            .get("max_context")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+
+        // Load the vector store
+        let store = match VectorStore::load(None) {
+            Ok(s) => s,
+            Err(e) => return ToolCallResult::error(format!("Failed to load index: {}", e)),
+        };
+
+        if store.chunk_count() == 0 {
+            return ToolCallResult::error(
+                "No files indexed. Run 'searchgrep watch <path>' first.".to_string(),
+            );
+        }
+
+        // Generate embedding for the question
+        let query_embedding = match LocalEmbedder::with_speed_mode(SpeedMode::Balanced) {
+            Ok(mut embedder) => match embedder.embed_query(&question) {
+                Ok(emb) => emb,
+                Err(e) => return ToolCallResult::error(format!("Embedding failed: {}", e)),
+            },
+            Err(e) => return ToolCallResult::error(format!("Model load failed: {}", e)),
+        };
+
+        // Search for relevant context
+        let searcher = HybridSearcher::default();
+        let results = searcher.search(
+            &store,
+            &query_embedding,
+            &question,
+            max_context,
+            None,
+            false,
+            None,
+        );
+
+        if results.is_empty() {
+            return ToolCallResult::success(format!(
+                "No relevant code found for: '{}'\n\nThe codebase may not contain information about this topic.",
+                question
+            ));
+        }
+
+        // Build context from results
+        let mut output = format!("# Question: {}\n\n", question);
+        output.push_str("## Relevant Code Context:\n\n");
+
+        for (i, result) in results.iter().enumerate() {
+            let score_pct = (result.score * 100.0) as u32;
+            output.push_str(&format!(
+                "### {}. {} ({}% relevant)\n",
+                i + 1,
+                result.chunk.file_path,
+                score_pct
+            ));
+            output.push_str(&format!(
+                "Lines {}-{}:\n",
+                result.chunk.start_line, result.chunk.end_line
+            ));
+            output.push_str("```\n");
+            output.push_str(&result.chunk.content);
+            if !result.chunk.content.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n\n");
+        }
+
+        output.push_str("## Summary:\n");
+        output.push_str(&format!(
+            "Found {} relevant code sections that may help answer: '{}'\n",
+            results.len(),
+            question
+        ));
+        output.push_str("Review the code above to understand the implementation.");
+
+        ToolCallResult::success(output)
+    }
+
+    fn execute_get_file_context(&self, args: Option<Value>) -> ToolCallResult {
+        let args = match args {
+            Some(a) => a,
+            None => return ToolCallResult::error("Missing arguments".to_string()),
+        };
+
+        let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => {
+                return ToolCallResult::error("Missing required 'file_path' argument".to_string())
+            }
+        };
+
+        let include_content = args
+            .get("include_content")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let path = Path::new(&file_path);
+        if !path.exists() {
+            return ToolCallResult::error(format!("File not found: {}", file_path));
+        }
+
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => return ToolCallResult::error(format!("Failed to read file: {}", e)),
+        };
+
+        let lines = content.lines().count();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown");
+
+        let mut output = format!("# File: {}\n\n", file_path);
+        output.push_str(&format!("- **Lines**: {}\n", lines));
+        output.push_str(&format!("- **Extension**: .{}\n", ext));
+
+        // Try to get symbol information from codemap
+        if let Ok(Some(map)) = CodeMap::load(Path::new(".")) {
+            let symbols: Vec<_> = map
+                .search(&file_path)
+                .into_iter()
+                .filter(|s| s.file == file_path || file_path.ends_with(&s.file))
+                .collect();
+
+            if !symbols.is_empty() {
+                output.push_str(&format!("- **Symbols**: {}\n\n", symbols.len()));
+                output.push_str("## Symbols in this file:\n\n");
+                for sym in symbols.iter().take(20) {
+                    output.push_str(&format!(
+                        "- [{}] {} (line {})\n",
+                        sym.kind.as_str(),
+                        sym.signature,
+                        sym.line
+                    ));
+                }
+                if symbols.len() > 20 {
+                    output.push_str(&format!("  ... and {} more\n", symbols.len() - 20));
+                }
+            }
+        }
+
+        // Detect imports/dependencies
+        let imports: Vec<&str> = content
+            .lines()
+            .filter(|l| {
+                l.trim().starts_with("use ")
+                    || l.trim().starts_with("import ")
+                    || l.trim().starts_with("from ")
+                    || l.trim().starts_with("require(")
+                    || l.trim().starts_with("#include")
+            })
+            .take(20)
+            .collect();
+
+        if !imports.is_empty() {
+            output.push_str("\n## Imports/Dependencies:\n\n");
+            for imp in &imports {
+                output.push_str(&format!("- {}\n", imp.trim()));
+            }
+        }
+
+        if include_content {
+            output.push_str("\n## Content:\n\n```");
+            output.push_str(ext);
+            output.push('\n');
+            output.push_str(&content);
+            output.push_str("\n```\n");
+        }
+
+        ToolCallResult::success(output)
+    }
+
+    fn execute_list_indexed_files(&self, args: Option<Value>) -> ToolCallResult {
+        let args = args.unwrap_or(json!({}));
+        let pattern = args.get("pattern").and_then(|v| v.as_str());
+
+        // Load the vector store
+        let store = match VectorStore::load(None) {
+            Ok(s) => s,
+            Err(e) => return ToolCallResult::error(format!("Failed to load index: {}", e)),
+        };
+
+        if store.chunk_count() == 0 {
+            return ToolCallResult::error(
+                "No files indexed. Run 'searchgrep watch <path>' first.".to_string(),
+            );
+        }
+
+        let files = store.list_files();
+
+        let filtered: Vec<&String> = if let Some(pat) = pattern {
+            files
+                .iter()
+                .filter(|f| {
+                    // Simple glob matching
+                    if pat.contains('*') {
+                        let parts: Vec<&str> = pat.split('*').collect();
+                        if parts.len() == 2 {
+                            let (prefix, suffix) = (parts[0], parts[1]);
+                            f.starts_with(prefix) && f.ends_with(suffix)
+                        } else {
+                            f.contains(&pat.replace('*', ""))
+                        }
+                    } else {
+                        f.contains(pat)
+                    }
+                })
+                .collect()
+        } else {
+            files.iter().collect()
+        };
+
+        let mut output = format!("# Indexed Files ({})\n\n", filtered.len());
+
+        // Group by directory
+        let mut by_dir: std::collections::HashMap<String, Vec<&String>> =
+            std::collections::HashMap::new();
+        for file in &filtered {
+            let dir = Path::new(file)
+                .parent()
+                .and_then(|p| p.to_str())
+                .unwrap_or(".")
+                .to_string();
+            by_dir.entry(dir).or_default().push(file);
+        }
+
+        let mut dirs: Vec<_> = by_dir.keys().collect();
+        dirs.sort();
+
+        for dir in dirs {
+            let files = by_dir.get(dir).unwrap();
+            output.push_str(&format!("## {}/\n", dir));
+            for file in files {
+                let name = Path::new(file)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(file);
+                output.push_str(&format!("  - {}\n", name));
+            }
+            output.push('\n');
+        }
+
+        ToolCallResult::success(output)
     }
 }
 

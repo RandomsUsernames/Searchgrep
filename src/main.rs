@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
 
 mod commands;
 mod core;
@@ -248,6 +249,31 @@ enum Commands {
         #[arg(long)]
         store: Option<String>,
     },
+
+    /// Update searchgrep to the latest version from GitHub
+    Update {
+        /// Check for updates without installing
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Remove searchgrep MCP configuration from AI tools
+    Remove {
+        /// Tool to remove from: claude, opencode, cursor, windsurf, or all
+        #[arg(default_value = "interactive")]
+        tool: String,
+    },
+
+    /// Initialize searchgrep in current directory (index + compile)
+    Init {
+        /// Fast mode - skip embeddings, BM25 only
+        #[arg(long)]
+        fast: bool,
+
+        /// Also setup MCP for Claude Code
+        #[arg(long)]
+        mcp: bool,
+    },
 }
 
 #[tokio::main]
@@ -456,15 +482,25 @@ async fn main() -> Result<()> {
                 "interactive" => {
                     println!("{}", "searchgrep MCP Setup".cyan().bold());
                     println!();
-                    println!("Select AI tool to configure:");
-                    println!("  {} Claude Code", "1.".bold());
-                    println!("  {} OpenCode", "2.".bold());
-                    println!("  {} Cursor", "3.".bold());
-                    println!("  {} Windsurf", "4.".bold());
-                    println!("  {} Codex (OpenAI)", "5.".bold());
-                    println!("  {} Gemini CLI", "6.".bold());
+                    println!("Select AI coding tool to configure:");
                     println!();
-                    print!("Enter choice (1-6): ");
+                    println!("  {}  Claude Code", "1.".bold());
+                    println!("  {}  OpenCode", "2.".bold());
+                    println!("  {}  Cursor", "3.".bold());
+                    println!("  {}  Windsurf", "4.".bold());
+                    println!("  {}  Codex (OpenAI)", "5.".bold());
+                    println!("  {}  Gemini CLI", "6.".bold());
+                    println!("  {}  Cody (Sourcegraph)", "7.".bold());
+                    println!("  {}  Continue", "8.".bold());
+                    println!("  {}  Aider", "9.".bold());
+                    println!("  {} Zed", "10.".bold());
+                    println!("  {} ACP (Agent Control Protocol)", "11.".bold());
+                    println!("  {} Droid", "12.".bold());
+                    println!("  {} Amp", "13.".bold());
+                    println!("  {} Roo Code", "14.".bold());
+                    println!("  {} Cline", "15.".bold());
+                    println!();
+                    print!("Enter choice (1-15): ");
                     io::stdout().flush()?;
 
                     let mut input = String::new();
@@ -477,6 +513,15 @@ async fn main() -> Result<()> {
                         "4" => vec!["windsurf"],
                         "5" => vec!["codex"],
                         "6" => vec!["gemini"],
+                        "7" => vec!["cody"],
+                        "8" => vec!["continue"],
+                        "9" => vec!["aider"],
+                        "10" => vec!["zed"],
+                        "11" => vec!["acp"],
+                        "12" => vec!["droid"],
+                        "13" => vec!["amp"],
+                        "14" => vec!["roo"],
+                        "15" => vec!["cline"],
                         _ => {
                             println!("{} Invalid choice", "✗".red());
                             return Ok(());
@@ -489,9 +534,18 @@ async fn main() -> Result<()> {
                 "windsurf" => vec!["windsurf"],
                 "codex" => vec!["codex"],
                 "gemini" => vec!["gemini"],
+                "cody" => vec!["cody"],
+                "continue" => vec!["continue"],
+                "aider" => vec!["aider"],
+                "zed" => vec!["zed"],
+                "acp" => vec!["acp"],
+                "droid" => vec!["droid"],
+                "amp" => vec!["amp"],
+                "roo" => vec!["roo"],
+                "cline" => vec!["cline"],
                 _ => {
                     println!("{} Unknown tool: {}", "✗".red(), tool);
-                    println!("Available: claude, opencode, cursor, windsurf, codex, gemini");
+                    println!("Available: claude, opencode, cursor, windsurf, codex, gemini, cody, continue, aider, zed, acp, droid, amp, roo, cline");
                     return Ok(());
                 }
             };
@@ -512,6 +566,15 @@ async fn main() -> Result<()> {
                     "windsurf" => (home.join(".windsurf/mcp.json"), false),
                     "codex" => (home.join(".codex/mcp.json"), false),
                     "gemini" => (home.join(".gemini/mcp.json"), false),
+                    "cody" => (home.join(".cody/mcp.json"), false),
+                    "continue" => (home.join(".continue/mcp.json"), false),
+                    "aider" => (home.join(".aider/mcp.json"), false),
+                    "zed" => (home.join(".zed/mcp.json"), false),
+                    "acp" => (home.join(".acp/mcp.json"), false),
+                    "droid" => (home.join(".droid/mcp.json"), false),
+                    "amp" => (home.join(".amp/mcp.json"), false),
+                    "roo" => (home.join(".roo-code/mcp.json"), false),
+                    "cline" => (home.join(".cline/mcp.json"), false),
                     _ => continue,
                 };
 
@@ -591,6 +654,311 @@ async fn main() -> Result<()> {
                 hybrid: false,
             })
             .await?;
+        }
+        Some(Commands::Update { check }) => {
+            use colored::Colorize;
+
+            let current_version = env!("CARGO_PKG_VERSION");
+            println!(
+                "{} Checking for updates (current: v{})...",
+                "→".cyan(),
+                current_version
+            );
+
+            // Fetch latest release from GitHub
+            let client = reqwest::Client::new();
+            let resp = client
+                .get("https://api.github.com/repos/RandomsUsernames/Searchgrep/releases/latest")
+                .header("User-Agent", "searchgrep")
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                println!("{} Failed to check for updates", "✗".red());
+                return Ok(());
+            }
+
+            let release: serde_json::Value = resp.json().await?;
+            let latest_version = release["tag_name"]
+                .as_str()
+                .unwrap_or("unknown")
+                .trim_start_matches('v');
+
+            if latest_version == current_version {
+                println!("{} Already up to date (v{})", "✓".green(), current_version);
+                return Ok(());
+            }
+
+            println!(
+                "{} New version available: v{} → v{}",
+                "!".yellow(),
+                current_version,
+                latest_version
+            );
+
+            if check {
+                println!("\nRun 'searchgrep update' to install the latest version.");
+                return Ok(());
+            }
+
+            // Download and install
+            println!("{} Downloading latest release...", "→".cyan());
+
+            #[cfg(target_os = "macos")]
+            let asset_name = if cfg!(target_arch = "aarch64") {
+                "searchgrep-aarch64-apple-darwin.tar.gz"
+            } else {
+                "searchgrep-x86_64-apple-darwin.tar.gz"
+            };
+
+            #[cfg(target_os = "linux")]
+            let asset_name = "searchgrep-x86_64-unknown-linux-gnu.tar.gz";
+
+            #[cfg(target_os = "windows")]
+            let asset_name = "searchgrep-x86_64-pc-windows-msvc.zip";
+
+            let download_url = format!(
+                "https://github.com/RandomsUsernames/Searchgrep/releases/download/v{}/{}",
+                latest_version, asset_name
+            );
+
+            let resp = client.get(&download_url).send().await?;
+            if !resp.status().is_success() {
+                println!("{} Failed to download release", "✗".red());
+                println!("Try manually: {}", download_url);
+                return Ok(());
+            }
+
+            let bytes = resp.bytes().await?;
+
+            // Extract and install
+            let temp_dir = std::env::temp_dir().join("searchgrep-update");
+            std::fs::create_dir_all(&temp_dir)?;
+
+            let archive_path = temp_dir.join(asset_name);
+            std::fs::write(&archive_path, &bytes)?;
+
+            println!("{} Installing...", "→".cyan());
+
+            // Extract using tar
+            let status = std::process::Command::new("tar")
+                .args([
+                    "-xzf",
+                    &archive_path.to_string_lossy(),
+                    "-C",
+                    &temp_dir.to_string_lossy(),
+                ])
+                .status()?;
+
+            if !status.success() {
+                println!("{} Failed to extract archive", "✗".red());
+                return Ok(());
+            }
+
+            // Copy binary to cargo bin
+            let cargo_bin = dirs::home_dir()
+                .unwrap_or_default()
+                .join(".cargo/bin/searchgrep");
+
+            let new_binary = temp_dir.join("searchgrep");
+            if new_binary.exists() {
+                std::fs::copy(&new_binary, &cargo_bin)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&cargo_bin, std::fs::Permissions::from_mode(0o755))?;
+                }
+            }
+
+            // Cleanup
+            let _ = std::fs::remove_dir_all(&temp_dir);
+
+            println!("{} Updated to v{}!", "✓".green(), latest_version);
+        }
+        Some(Commands::Remove { tool }) => {
+            use colored::Colorize;
+
+            let home =
+                dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+
+            let tools: Vec<&str> = match tool.as_str() {
+                "interactive" => {
+                    println!("{}", "searchgrep MCP Removal".cyan().bold());
+                    println!();
+                    println!("Select AI tool to remove searchgrep from:");
+                    println!();
+                    println!("  {}  Claude Code", "1.".bold());
+                    println!("  {}  OpenCode", "2.".bold());
+                    println!("  {}  Cursor", "3.".bold());
+                    println!("  {}  Windsurf", "4.".bold());
+                    println!("  {}  All configured tools", "5.".bold());
+                    println!();
+                    print!("Enter choice (1-5): ");
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    match input.trim() {
+                        "1" => vec!["claude"],
+                        "2" => vec!["opencode"],
+                        "3" => vec!["cursor"],
+                        "4" => vec!["windsurf"],
+                        "5" => vec![
+                            "claude", "opencode", "cursor", "windsurf", "codex", "gemini", "cody",
+                            "continue", "aider", "zed", "acp", "droid", "amp", "roo", "cline",
+                        ],
+                        _ => {
+                            println!("{} Invalid choice", "✗".red());
+                            return Ok(());
+                        }
+                    }
+                }
+                "all" => vec![
+                    "claude", "opencode", "cursor", "windsurf", "codex", "gemini", "cody",
+                    "continue", "aider", "zed", "acp", "droid", "amp", "roo", "cline",
+                ],
+                other => vec![other],
+            };
+
+            for tool_name in tools {
+                let (config_path, is_claude) = match tool_name {
+                    "claude" => (home.join(".claude.json"), true),
+                    "opencode" => (home.join(".opencode/mcp.json"), false),
+                    "cursor" => (home.join(".cursor/mcp.json"), false),
+                    "windsurf" => (home.join(".windsurf/mcp.json"), false),
+                    "codex" => (home.join(".codex/mcp.json"), false),
+                    "gemini" => (home.join(".gemini/mcp.json"), false),
+                    "cody" => (home.join(".cody/mcp.json"), false),
+                    "continue" => (home.join(".continue/mcp.json"), false),
+                    "aider" => (home.join(".aider/mcp.json"), false),
+                    "zed" => (home.join(".zed/mcp.json"), false),
+                    "acp" => (home.join(".acp/mcp.json"), false),
+                    "droid" => (home.join(".droid/mcp.json"), false),
+                    "amp" => (home.join(".amp/mcp.json"), false),
+                    "roo" => (home.join(".roo-code/mcp.json"), false),
+                    "cline" => (home.join(".cline/mcp.json"), false),
+                    _ => continue,
+                };
+
+                if !config_path.exists() {
+                    continue;
+                }
+
+                let content = std::fs::read_to_string(&config_path)?;
+                let mut config: serde_json::Value =
+                    serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+
+                let removed = if is_claude {
+                    let home_str = home.to_string_lossy().to_string();
+                    if let Some(servers) =
+                        config["projects"][&home_str]["mcpServers"].as_object_mut()
+                    {
+                        servers.remove("searchgrep").is_some()
+                    } else {
+                        false
+                    }
+                } else {
+                    if let Some(servers) = config["mcpServers"].as_object_mut() {
+                        servers.remove("searchgrep").is_some()
+                    } else {
+                        false
+                    }
+                };
+
+                if removed {
+                    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+                    println!("{} Removed searchgrep from {}", "✓".green(), tool_name);
+                }
+            }
+        }
+        Some(Commands::Init { fast, mcp }) => {
+            use colored::Colorize;
+
+            let current_dir = std::env::current_dir()?;
+            println!(
+                "{} Initializing searchgrep in {}",
+                "→".cyan(),
+                current_dir.display()
+            );
+
+            // Index the directory
+            println!("{} Indexing files...", "→".cyan());
+
+            let speed_mode = if fast {
+                crate::core::local_embeddings::SpeedMode::Fast
+            } else {
+                crate::core::local_embeddings::SpeedMode::Balanced
+            };
+
+            crate::commands::watch::sync_files(
+                current_dir.to_str().unwrap_or("."),
+                None,
+                speed_mode,
+            )
+            .await?;
+
+            println!("{} Indexed successfully", "✓".green());
+
+            // Compile codebase map
+            println!("{} Compiling codebase map...", "→".cyan());
+            match compile::run(compile::CompileOptions {
+                path: Some(current_dir.to_string_lossy().to_string()),
+                show: false,
+                minimal: false,
+            })
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("{} Failed to compile: {}", "✗".yellow(), e);
+                }
+            }
+
+            // Setup MCP if requested
+            if mcp {
+                println!("{} Setting up Claude Code MCP...", "→".cyan());
+                let home = dirs::home_dir()
+                    .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+                let searchgrep_path = which::which("searchgrep")
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "searchgrep".to_string());
+
+                let config_path = home.join(".claude.json");
+                let mut config: serde_json::Value = if config_path.exists() {
+                    let content = std::fs::read_to_string(&config_path)?;
+                    serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+                } else {
+                    serde_json::json!({})
+                };
+
+                let home_str = home.to_string_lossy().to_string();
+                if config.get("projects").is_none() {
+                    config["projects"] = serde_json::json!({});
+                }
+                if config["projects"].get(&home_str).is_none() {
+                    config["projects"][&home_str] = serde_json::json!({});
+                }
+                if config["projects"][&home_str].get("mcpServers").is_none() {
+                    config["projects"][&home_str]["mcpServers"] = serde_json::json!({});
+                }
+                config["projects"][&home_str]["mcpServers"]["searchgrep"] = serde_json::json!({
+                    "command": searchgrep_path,
+                    "args": ["mcp-server"],
+                    "env": {}
+                });
+
+                std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+                println!("{} Claude Code MCP configured", "✓".green());
+            }
+
+            println!();
+            println!("{}", "Ready! You can now:".green().bold());
+            println!("  • Search: searchgrep search \"your query\"");
+            println!("  • Ask: searchgrep ask \"how does X work?\"");
+            if !mcp {
+                println!("  • Setup MCP: searchgrep mcp");
+            }
         }
         None => {
             if let Some(pattern) = cli.pattern {
