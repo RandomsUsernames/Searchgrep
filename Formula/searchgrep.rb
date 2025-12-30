@@ -7,7 +7,7 @@ class Searchgrep < Formula
   on_macos do
     on_arm do
       url "https://github.com/RandomsUsernames/Searchgrep/releases/download/v2.0.0/searchgrep-aarch64-apple-darwin.tar.gz"
-      sha256 "c2c43fc569186d5fca641cdb1cd87e371b95f3c8fe2986025936764ddbfa2ec0"
+      sha256 "3b7e49772ecfbd967d061af34f51c7371327d66368bf5b640526929ea50e5bf9"
     end
   end
 
