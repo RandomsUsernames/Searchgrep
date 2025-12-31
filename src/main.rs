@@ -292,8 +292,9 @@ enum Commands {
     },
 
     /// Install searchgrep as a skill/tool for AI coding tools (in addition to MCP)
+    #[command(alias = "skills")]
     Skill {
-        /// Tool to install skill for: opencode, or all
+        /// Tool to install skill for: claude, gemini, opencode, or all
         #[arg(default_value = "interactive")]
         tool: String,
     },
@@ -1145,33 +1146,167 @@ async fn main() -> Result<()> {
                     println!();
                     println!("Install searchgrep as a skill/tool for:");
                     println!();
-                    println!("  {}  OpenCode", "1.".bold());
+                    println!("  {}  Claude (claude.ai & Claude Code)", "1.".bold());
+                    println!("  {}  Gemini CLI", "2.".bold());
+                    println!("  {}  OpenCode", "3.".bold());
+                    println!("  {}  All", "4.".bold());
                     println!();
-                    print!("Enter choice (1): ");
+                    print!("Enter choice (1-4): ");
                     io::stdout().flush()?;
 
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
 
                     match input.trim() {
-                        "1" | "" => vec!["opencode"],
+                        "1" => vec!["claude"],
+                        "2" => vec!["gemini"],
+                        "3" => vec!["opencode"],
+                        "4" | "" => vec!["claude", "gemini", "opencode"],
                         _ => {
                             println!("{} Invalid choice", "✗".red());
                             return Ok(());
                         }
                     }
                 }
+                "claude" => vec!["claude"],
+                "gemini" => vec!["gemini"],
                 "opencode" => vec!["opencode"],
-                "all" => vec!["opencode"],
+                "all" => vec!["claude", "gemini", "opencode"],
                 _ => {
                     println!("{} Unknown tool: {}", "✗".red(), tool);
-                    println!("Available: opencode, all");
+                    println!("Available: claude, gemini, opencode, all");
                     return Ok(());
                 }
             };
 
             for tool_name in tools {
                 match tool_name {
+                    "claude" => {
+                        // Claude uses SKILL.md files in .claude/skills/
+                        let skill_dir = home.join(".claude/skills/searchgrep");
+                        std::fs::create_dir_all(&skill_dir)?;
+
+                        let skill_content = r#"---
+name: searchgrep
+description: Semantic code search using AI embeddings. Search your codebase using natural language instead of regex patterns.
+---
+
+# searchgrep - Semantic Code Search
+
+A powerful semantic grep tool that uses AI embeddings to search code by meaning, not just text matching.
+
+## When to Use This Skill
+
+Use searchgrep when you need to:
+- Find code related to a concept (e.g., "authentication logic", "error handling")
+- Search for implementations without knowing exact function names
+- Explore unfamiliar codebases
+- Find similar code patterns
+
+## Commands
+
+### Search
+```bash
+searchgrep search "your natural language query" [path]
+searchgrep search -m 20 "database connection handling"  # more results
+searchgrep search -c "API error responses"  # show content snippets
+```
+
+### Ask (AI-powered Q&A)
+```bash
+searchgrep ask "how does the payment system work?"
+searchgrep ask "what authentication methods are used?"
+```
+
+### Index (for faster searches)
+```bash
+searchgrep index .  # index current directory
+searchgrep index --fast .  # quick BM25-only indexing
+```
+
+## Best Practices
+
+1. Use descriptive natural language queries
+2. Be specific about what you're looking for
+3. Index large codebases first for faster results
+
+## Examples
+
+- `searchgrep search "user authentication middleware"`
+- `searchgrep search "database connection pooling" src/`
+- `searchgrep ask "how are API routes organized?"`
+- `searchgrep search -t py "machine learning model training"`
+"#;
+
+                        let skill_path = skill_dir.join("SKILL.md");
+                        std::fs::write(&skill_path, skill_content)?;
+
+                        println!(
+                            "{} Installed Claude skill at {}",
+                            "✓".green().bold(),
+                            skill_path.display()
+                        );
+                    }
+                    "gemini" => {
+                        // Gemini CLI uses extensions in .gemini/extensions/
+                        let ext_dir = home.join(".gemini/extensions/searchgrep");
+                        std::fs::create_dir_all(&ext_dir)?;
+
+                        // Find searchgrep binary path
+                        let searchgrep_path = which::which("searchgrep")
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|_| "searchgrep".to_string());
+
+                        let extension_json = serde_json::json!({
+                            "name": "searchgrep",
+                            "description": "Semantic code search using AI embeddings. Search your codebase using natural language.",
+                            "mcpServers": {
+                                "searchgrep": {
+                                    "command": searchgrep_path,
+                                    "args": ["mcp-server"]
+                                }
+                            },
+                            "context": [
+                                {
+                                    "file": "SKILL.md"
+                                }
+                            ]
+                        });
+
+                        let ext_json_path = ext_dir.join("gemini-extension.json");
+                        std::fs::write(
+                            &ext_json_path,
+                            serde_json::to_string_pretty(&extension_json)?,
+                        )?;
+
+                        // Also add a SKILL.md for context
+                        let skill_content = r#"# searchgrep - Semantic Code Search
+
+Use searchgrep to search code by meaning using natural language.
+
+## Commands
+
+- `searchgrep search "query"` - Semantic search
+- `searchgrep ask "question"` - Ask questions about code
+- `searchgrep index .` - Index for faster searches
+
+## Examples
+
+```bash
+searchgrep search "authentication middleware"
+searchgrep search -m 20 "error handling patterns"
+searchgrep ask "how does the API handle errors?"
+```
+"#;
+                        let skill_path = ext_dir.join("SKILL.md");
+                        std::fs::write(&skill_path, skill_content)?;
+
+                        println!(
+                            "{} Installed Gemini CLI extension at {}",
+                            "✓".green().bold(),
+                            ext_dir.display()
+                        );
+                    }
                     "opencode" => {
                         let skill_dir = home.join(".config/opencode/tool");
                         std::fs::create_dir_all(&skill_dir)?;
@@ -1232,7 +1367,7 @@ export default tool({
                         std::fs::write(&skill_path, skill_content)?;
 
                         println!(
-                            "{} Installed searchgrep skill at {}",
+                            "{} Installed OpenCode skill at {}",
                             "✓".green().bold(),
                             skill_path.display()
                         );
