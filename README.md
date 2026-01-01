@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/sgrep"><img src="https://img.shields.io/crates/v/sgrep.svg" alt="Crates.io"></a>
-  <a href="https://www.npmjs.com/package/sgrep"><img src="https://img.shields.io/npm/v/sgrep.svg" alt="npm"></a>
+  <a href="https://crates.io/crates/searchgrep"><img src="https://img.shields.io/crates/v/searchgrep.svg" alt="Crates.io"></a>
+  <a href="https://www.npmjs.com/package/searchgrep"><img src="https://img.shields.io/npm/v/searchgrep.svg" alt="npm"></a>
   <a href="https://github.com/RandomsUsernames/sgrep/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/RandomsUsernames/sgrep/releases"><img src="https://img.shields.io/github/v/release/RandomsUsernames/sgrep" alt="GitHub release"></a>
 </p>
@@ -53,8 +53,8 @@ brew install sgrep
 ### npm / npx
 
 ```bash
-npx sgrep          # Run directly
-npm install -g sgrep  # Install globally
+npx searchgrep          # Run directly
+npm install -g searchgrep  # Install globally
 ```
 
 ### From Source
